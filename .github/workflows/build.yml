@@ -1,57 +1,78 @@
 name: AssetStudioBuild
 
 on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
-
   workflow_dispatch:
+    inputs:
+      target_framework:
+        description: '选择编译目标 .NET 平台'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - net472
+          - net8.0-windows
+          - net9.0-windows
 
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{
+          (github.event.inputs.target_framework == '' || github.event.inputs.target_framework == 'all')
+          && fromJson('["net472", "net8.0-windows", "net9.0-windows"]')
+          || fromJson(format('["{0}"]', github.event.inputs.target_framework))
+        }}
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: microsoft/setup-msbuild@v1.1
-      
+      - uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
       - name: Download FBX SDK
         run: |
           md fbx
           cd fbx
           Invoke-WebRequest "https://damassets.autodesk.net/content/dam/autodesk/www/adn/fbx/2020-2-1/fbx202021_fbxsdk_vs2019_win.exe" -OutFile "fbxsdk.exe"
           Start-Process -FilePath "fbxsdk.exe" /S -Wait
-          Invoke-WebRequest "https://damassets.autodesk.net/content/dam/autodesk/www/adn/fbx/2020-2-1/fbx202021_fbxsdk_vs2019_pdbs.exe" -OutFile "fbxpdb.exe"
-          Start-Process -FilePath "fbxpdb.exe" /S -Wait
           cd ..
 
       - name: Nuget Restore
         run: nuget restore
-      
-      - name: Build .Net472
-        run: msbuild /p:Configuration=Release /p:TargetFramework=net472 /verbosity:minimal
 
-      - name: Build .Net5
-        run: msbuild /t:AssetStudioGUI:publish /p:Configuration=Release /p:TargetFramework=net5.0-windows /p:SelfContained=false /verbosity:minimal
+      - name: Build ${{ matrix.target }}
+        run: msbuild /p:Configuration=Release /p:TargetFramework=${{ matrix.target }} /verbosity:minimal
 
-      - name: Build .Net6
-        run: msbuild /t:AssetStudioGUI:publish /p:Configuration=Release /p:TargetFramework=net6.0-windows /p:SelfContained=false /verbosity:minimal
+      - name: Publish ${{ matrix.target }}
+        if: matrix.target != 'net472'
+        run: msbuild /t:AssetStudioGUI:publish /p:Configuration=Release /p:TargetFramework=${{ matrix.target }} /p:SelfContained=false /verbosity:minimal
 
-      - name: Upload .Net472 Artifact
-        uses: actions/upload-artifact@v2
+      - name: Package ${{ matrix.target }}
+        shell: pwsh
+        run: |
+          $target = "${{ matrix.target }}"
+          if ($target -eq "net472") {
+            $src = "AssetStudioGUI/bin/Release/$target"
+          } else {
+            $src = "AssetStudioGUI/bin/Release/$target/publish"
+          }
+          $zipName = "AssetStudio.$target.zip"
+          Compress-Archive -Path "$src\*" -DestinationPath $zipName
+          Write-Host "Packaged: $zipName"
+
+      - name: Upload ${{ matrix.target }} Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: AssetStudio.net472
-          path: AssetStudioGUI/bin/Release/net472
-
-      - name: Upload .Net5 Artifact
-        uses: actions/upload-artifact@v2
-        with:
-          name: AssetStudio.net5
-          path: AssetStudioGUI/bin/Release/net5.0-windows/publish
-
-      - name: Upload .Net6 Artifact
-        uses: actions/upload-artifact@v2
-        with:
-          name: AssetStudio.net6
-          path: AssetStudioGUI/bin/Release/net6.0-windows/publish
+          name: AssetStudio.${{ matrix.target }}
+          path: AssetStudio.${{ matrix.target }}.zip
+          retention-days: 7

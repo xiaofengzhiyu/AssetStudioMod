@@ -114,6 +114,7 @@ namespace AssetStudioGUI
 
         private string openDirectoryBackup = string.Empty;
         private string saveDirectoryBackup = string.Empty;
+        private string initialPath;
 
         private GUILogger logger;
 
@@ -127,7 +128,7 @@ namespace AssetStudioGUI
 
         private string guiTitle;
 
-        public AssetStudioGUIForm()
+        public AssetStudioGUIForm(string path = null)
         {
             Thread.CurrentThread.CurrentCulture = new CultureInfo("en-US");
             ConsoleWindow.RunConsole(Properties.Settings.Default.showConsole);
@@ -171,6 +172,52 @@ namespace AssetStudioGUI
             Progress.Default = new Progress<int>(SetProgressBarValue);
             Progress.SetInstance(index: 1, new Progress<int>(SetProgressBarStringValue));
             Studio.StatusStripUpdate = StatusStripUpdate;
+
+            if (!string.IsNullOrEmpty(path))
+            {
+                initialPath = path;
+                Shown += AssetStudioGUIForm_Shown;
+            }
+        }
+
+        private async void AssetStudioGUIForm_Shown(object sender, EventArgs e)
+        {
+            Shown -= AssetStudioGUIForm_Shown;
+            var path = initialPath;
+            initialPath = null;
+            if (string.IsNullOrEmpty(path))
+                return;
+
+            try
+            {
+                if (File.Exists(path) || Directory.Exists(path))
+                {
+                    var pathList = new List<string> { path };
+                    assetsManager.LoadOptionFiles(pathList);
+                    if (pathList.Count == 0)
+                        return;
+
+                    ResetForm();
+                    for (var i = 0; i < pathList.Count; i++)
+                    {
+                        if (pathList[i].ToLower().EndsWith(".lnk"))
+                        {
+                            var targetPath = LnkReader.GetLnkTarget(pathList[i]);
+                            if (!string.IsNullOrEmpty(targetPath))
+                            {
+                                pathList[i] = targetPath;
+                            }
+                        }
+                    }
+                    await Task.Run(() => assetsManager.LoadFilesAndFolders(out openDirectoryBackup, pathList));
+                    saveDirectoryBackup = openDirectoryBackup;
+                    BuildAssetStructures();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Failed to load path: {path}", ex);
+            }
         }
 
         private void AssetStudioGUIForm_DragEnter(object sender, DragEventArgs e)
