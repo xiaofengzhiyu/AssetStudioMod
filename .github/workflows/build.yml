@@ -20,11 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ${{
-          (github.event.inputs.target_framework == '' || github.event.inputs.target_framework == 'all')
-          && fromJson('["net472", "net8.0-windows", "net9.0-windows"]')
-          || fromJson(format('["{0}"]', github.event.inputs.target_framework))
-        }}
+        target: ${{ github.event.inputs.target_framework == 'all' && fromJSON('["net472", "net8.0-windows", "net9.0-windows"]') || fromJSON(format('["{0}"]', github.event.inputs.target_framework)) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -50,29 +46,15 @@ jobs:
       - name: Nuget Restore
         run: nuget restore
 
-      - name: Build ${{ matrix.target }}
-        run: msbuild /p:Configuration=Release /p:TargetFramework=${{ matrix.target }} /verbosity:minimal
+      - name: Build Solution (Native Dependencies)
+        run: msbuild /p:Configuration=Release /p:TargetFramework=net472 /verbosity:minimal
 
-      - name: Publish ${{ matrix.target }}
+      - name: Publish AssetStudioGUI for ${{ matrix.target }}
         if: matrix.target != 'net472'
-        run: msbuild /t:AssetStudioGUI:publish /p:Configuration=Release /p:TargetFramework=${{ matrix.target }} /p:SelfContained=false /verbosity:minimal
-
-      - name: Package ${{ matrix.target }}
-        shell: pwsh
-        run: |
-          $target = "${{ matrix.target }}"
-          if ($target -eq "net472") {
-            $src = "AssetStudioGUI/bin/Release/$target"
-          } else {
-            $src = "AssetStudioGUI/bin/Release/$target/publish"
-          }
-          $zipName = "AssetStudio.$target.zip"
-          Compress-Archive -Path "$src\*" -DestinationPath $zipName
-          Write-Host "Packaged: $zipName"
+        run: msbuild AssetStudioGUI/AssetStudioGUI.csproj /t:publish /p:Configuration=Release /p:TargetFramework=${{ matrix.target }} /p:SelfContained=false "/p:SolutionDir=${{ github.workspace }}\" /verbosity:minimal
 
       - name: Upload ${{ matrix.target }} Artifact
         uses: actions/upload-artifact@v4
         with:
           name: AssetStudio.${{ matrix.target }}
-          path: AssetStudio.${{ matrix.target }}.zip
-          retention-days: 7
+          path: ${{ matrix.target != 'net472' && format('AssetStudioGUI/bin/Release/{0}/publish', matrix.target) || format('AssetStudioGUI/bin/Release/{0}', matrix.target) }}
